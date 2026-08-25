@@ -153,26 +153,25 @@ Sub ImportCSVToDatabase()
         '========================================================
         ' CSV column 3 -> Database AL
         '
-        ' Example input:
+        ' Input example:
         '
-        ' 2026-06-23 14:14:12.700000
+        ' 2026-06-23 14:12:56.214000
         '
         ' Desired output:
         '
-        ' 2026-06-23T14:14:12.70
+        ' 2026-06-23T14:12:56
         '
-        ' This is constructed entirely as a STRING.
+        ' Fractional seconds are discarded.
+        ' The value is stored explicitly as TEXT.
         '========================================================
         value3 = Trim$(CStr(fields(2)))
         
-        If Len(value3) >= 22 Then
+        If Len(value3) >= 19 Then
             
             value3 = _
                 Mid$(value3, 1, 10) & _
                 "T" & _
-                Mid$(value3, 12, 8) & _
-                "." & _
-                Mid$(value3, 21, 2)
+                Mid$(value3, 12, 8)
             
         Else
             
@@ -236,8 +235,8 @@ Sub ImportCSVToDatabase()
         '--------------------------------------------------------
         ' EE
         '
-        ' Keep Excel number format as General but force the value
-        ' to remain text instead of becoming a date.
+        ' Keep Excel number format as General but force the
+        ' value to remain text instead of becoming a date.
         '--------------------------------------------------------
         dbWs.Cells(dbRow, "EE").NumberFormat = "General"
         dbWs.Cells(dbRow, "EE").Value2 = "'" & selgerFodelsedag
