@@ -25,7 +25,8 @@ Sub ImportCSVToDatabase()
     Dim restValue As String
     Dim i As Long
     
-    Dim fieldInfo(1 To 16, 1 To 2) As Variant
+    Dim fieldInfo() As Variant
+    Dim maxColumns As Long
     
     Dim oldScreenUpdating As Boolean
     Dim oldDisplayAlerts As Boolean
@@ -75,25 +76,18 @@ Sub ImportCSVToDatabase()
     Application.DisplayAlerts = False
     
     '------------------------------------------------------------
-    ' Tell Excel to import ALL CSV columns as TEXT.
+    ' Import CSV.
     '
-    ' This is important because otherwise Excel may automatically
-    ' convert values such as:
-    '
-    ' 2026-06-23 14:12:56.214000
-    '
-    ' into a date/time before VBA can process the value.
+    ' All first 16 columns are explicitly imported as TEXT.
+    ' This prevents Excel from converting dates/numbers automatically.
     '------------------------------------------------------------
+    
+    ReDim fieldInfo(1 To 16)
+    
     For i = 1 To 16
-        fieldInfo(i, 1) = i
-        fieldInfo(i, 2) = xlTextFormat
+        fieldInfo(i) = Array(i, xlTextFormat)
     Next i
     
-    '------------------------------------------------------------
-    ' Import CSV as text
-    '
-    ' UTF-8 encoding is specified with Origin:=65001.
-    '------------------------------------------------------------
     Workbooks.OpenText _
         Filename:=CStr(csvPath), _
         Origin:=65001, _
@@ -112,9 +106,9 @@ Sub ImportCSVToDatabase()
     Set csvWs = csvWb.Worksheets(1)
     
     '------------------------------------------------------------
-    ' Find last row in CSV
+    ' Find last row in CSV.
     '
-    ' CSV has NO header row, so row 1 is data.
+    ' CSV has NO header row.
     '------------------------------------------------------------
     lastCsvRow = csvWs.Cells(csvWs.Rows.Count, 2).End(xlUp).Row
     
@@ -140,13 +134,6 @@ Sub ImportCSVToDatabase()
     End If
     
     '------------------------------------------------------------
-    ' Set destination columns that must contain text
-    '------------------------------------------------------------
-    dbWs.Range("A" & startRow & ":A" & startRow + numRows - 1).NumberFormat = "@"
-    dbWs.Range("AG" & startRow & ":AG" & startRow + numRows - 1).NumberFormat = "@"
-    dbWs.Range("AL" & startRow & ":AL" & startRow + numRows - 1).NumberFormat = "@"
-    
-    '------------------------------------------------------------
     ' Import each CSV row
     '------------------------------------------------------------
     For r = 1 To lastCsvRow
@@ -156,67 +143,77 @@ Sub ImportCSVToDatabase()
         '========================================================
         ' CSV column 2 -> Database F
         '========================================================
-        dbWs.Cells(dbRow, "F").Value = CStr(csvWs.Cells(r, 2).Value)
+        dbWs.Cells(dbRow, "F").Value2 = CStr(csvWs.Cells(r, 2).Value2)
         
         '========================================================
         ' CSV column 4 -> Database S and T
         '========================================================
-        dbWs.Cells(dbRow, "S").Value = CStr(csvWs.Cells(r, 4).Value)
-        dbWs.Cells(dbRow, "T").Value = CStr(csvWs.Cells(r, 4).Value)
+        dbWs.Cells(dbRow, "S").Value2 = CStr(csvWs.Cells(r, 4).Value2)
+        dbWs.Cells(dbRow, "T").Value2 = CStr(csvWs.Cells(r, 4).Value2)
         
         '========================================================
         ' CSV column 7 -> Database AG
         '
         ' Convert to string and remove ALL leading "-".
-        '
-        ' Examples:
-        '   -12345    -> 12345
-        '   --12345   -> 12345
-        '   ---12345  -> 12345
         '========================================================
-        value7 = CStr(csvWs.Cells(r, 7).Value)
+        value7 = CStr(csvWs.Cells(r, 7).Value2)
         
-        Do While Len(value7) > 0 And Left(value7, 1) = "-"
-            value7 = Mid(value7, 2)
+        Do While Len(value7) > 0 And Left$(value7, 1) = "-"
+            value7 = Mid$(value7, 2)
         Loop
         
         dbWs.Cells(dbRow, "AG").NumberFormat = "@"
-        dbWs.Cells(dbRow, "AG").Value = value7
+        dbWs.Cells(dbRow, "AG").Value2 = value7
         
         '========================================================
         ' CSV column 3 -> Database AL
         '
-        ' CSV input:
+        ' Expected CSV format:
         '
         ' 2026-06-23 14:12:56.214000
         '
-        ' Desired output:
+        ' Output:
         '
         ' 2026-06-23T14:12:56.21
         '
-        ' The original CSV value is preserved as TEXT because
-        ' the CSV was imported with xlTextFormat.
+        ' The result is explicitly stored as TEXT.
         '========================================================
-        value3 = CStr(csvWs.Cells(r, 3).Value)
+        
+        value3 = CStr(csvWs.Cells(r, 3).Value2)
+        
+        ' Remove any leading/trailing whitespace
+        value3 = Trim$(value3)
         
         If Len(value3) >= 22 Then
             
-            ' Keep:
-            ' YYYY-MM-DD HH:MM:SS.xx
+            ' Build the output explicitly rather than using
+            ' date/time conversion functions.
             '
-            ' 22 characters total
-            value3 = Left(value3, 22)
+            ' Characters:
+            ' 1-10  = YYYY-MM-DD
+            ' 12-19 = HH:MM:SS
+            ' 21-22 = hundredths of a second
             
-            ' Replace the space between date and time with T
-            value3 = Replace(value3, " ", "T")
+            value3 = _
+                Mid$(value3, 1, 10) & _
+                "T" & _
+                Mid$(value3, 12, 8) & _
+                Mid$(value3, 20, 3)
+            
+            ' The above produces:
+            '
+            ' 2026-06-23T14:12:56.21
+            '
+            ' Store as text.
+            dbWs.Cells(dbRow, "AL").NumberFormat = "@"
+            dbWs.Cells(dbRow, "AL").Value2 = value3
             
         Else
-            value3 = ""
+            
+            dbWs.Cells(dbRow, "AL").NumberFormat = "@"
+            dbWs.Cells(dbRow, "AL").Value2 = ""
+            
         End If
-        
-        ' Explicitly store as TEXT
-        dbWs.Cells(dbRow, "AL").NumberFormat = "@"
-        dbWs.Cells(dbRow, "AL").Value = value3
         
         '========================================================
         ' CSV column 16
@@ -225,14 +222,14 @@ Sub ImportCSVToDatabase()
         ' Last value -> EC
         ' Everything before last value -> ED
         '========================================================
-        value16 = Trim(CStr(csvWs.Cells(r, 16).Value))
+        value16 = Trim$(CStr(csvWs.Cells(r, 16).Value2))
         
         If Len(value16) > 0 Then
             
             parts = Split(value16, " ")
             
             ' Last value -> EC
-            dbWs.Cells(dbRow, "EC").Value = parts(UBound(parts))
+            dbWs.Cells(dbRow, "EC").Value2 = parts(UBound(parts))
             
             ' Everything before last value -> ED
             restValue = ""
@@ -251,12 +248,12 @@ Sub ImportCSVToDatabase()
                 
             End If
             
-            dbWs.Cells(dbRow, "ED").Value = restValue
+            dbWs.Cells(dbRow, "ED").Value2 = restValue
             
         Else
             
-            dbWs.Cells(dbRow, "EC").Value = ""
-            dbWs.Cells(dbRow, "ED").Value = ""
+            dbWs.Cells(dbRow, "EC").Value2 = ""
+            dbWs.Cells(dbRow, "ED").Value2 = ""
             
         End If
         
@@ -265,59 +262,66 @@ Sub ImportCSVToDatabase()
         '========================================================
         
         ' Kjoper LEI
-        dbWs.Cells(dbRow, "DB").Value = kjoperLEI
+        dbWs.Cells(dbRow, "DB").Value2 = kjoperLEI
         
         ' Selger Mortpart ID
-        dbWs.Cells(dbRow, "DD").Value = selgerMortpartID
+        dbWs.Cells(dbRow, "DD").Value2 = selgerMortpartID
         
         ' Selger Fodelsedag
-        dbWs.Cells(dbRow, "EE").Value = selgerFodelsedag
+        '
+        ' Keep the cell formatted as GENERAL but force Excel
+        ' to retain the YYYY-MM-DD value as text.
+        '
+        ' The leading apostrophe is not displayed in Excel.
+        dbWs.Cells(dbRow, "EE").NumberFormat = "General"
+        dbWs.Cells(dbRow, "EE").Value2 = "'" & selgerFodelsedag
         
         '========================================================
         ' Fixed values
         '========================================================
         
         ' Column A
-        ' Stored as TEXT to guarantee "." decimal separator.
+        '
+        ' Store as TEXT so the decimal separator is always ".".
         dbWs.Cells(dbRow, "A").NumberFormat = "@"
-        dbWs.Cells(dbRow, "A").Value = "2.4"
+        dbWs.Cells(dbRow, "A").Value2 = "2.4"
         
-        dbWs.Cells(dbRow, "C").Value = "EQ"
-        dbWs.Cells(dbRow, "D").Value = "CS"
-        dbWs.Cells(dbRow, "E").Value = "ISIN"
+        dbWs.Cells(dbRow, "C").Value2 = "EQ"
+        dbWs.Cells(dbRow, "D").Value2 = "CS"
+        dbWs.Cells(dbRow, "E").Value2 = "ISIN"
         
-        dbWs.Cells(dbRow, "W").Value = "MIC"
-        dbWs.Cells(dbRow, "X").Value = "XOFF"
-        dbWs.Cells(dbRow, "AA").Value = "NA"
-        dbWs.Cells(dbRow, "AB").Value = "NOK"
+        dbWs.Cells(dbRow, "W").Value2 = "MIC"
+        dbWs.Cells(dbRow, "X").Value2 = "XOFF"
+        dbWs.Cells(dbRow, "AA").Value2 = "NA"
+        dbWs.Cells(dbRow, "AB").Value2 = "NOK"
         
-        dbWs.Cells(dbRow, "CW").Value = "N"
-        dbWs.Cells(dbRow, "CY").Value = "N"
+        dbWs.Cells(dbRow, "CW").Value2 = "N"
+        dbWs.Cells(dbRow, "CY").Value2 = "N"
         
-        dbWs.Cells(dbRow, "DA").Value = "LEI"
-        dbWs.Cells(dbRow, "DC").Value = "NATIONAL_ID_NUM"
+        dbWs.Cells(dbRow, "DA").Value2 = "LEI"
+        dbWs.Cells(dbRow, "DC").Value2 = "NATIONAL_ID_NUM"
         
-        dbWs.Cells(dbRow, "DI").Value = "LEI"
-        dbWs.Cells(dbRow, "DJ").Value = kjoperLEI
-        dbWs.Cells(dbRow, "DK").Value = "Y"
+        dbWs.Cells(dbRow, "DI").Value2 = "LEI"
+        dbWs.Cells(dbRow, "DJ").Value2 = kjoperLEI
+        dbWs.Cells(dbRow, "DK").Value2 = "Y"
         
-        dbWs.Cells(dbRow, "DL").Value = "LEI"
-        dbWs.Cells(dbRow, "DM").Value = kjoperLEI
+        dbWs.Cells(dbRow, "DL").Value2 = "LEI"
+        dbWs.Cells(dbRow, "DM").Value2 = kjoperLEI
         
-        dbWs.Cells(dbRow, "DN").Value = "LEI"
-        dbWs.Cells(dbRow, "DO").Value = kjoperLEI
+        dbWs.Cells(dbRow, "DN").Value2 = "LEI"
+        dbWs.Cells(dbRow, "DO").Value2 = kjoperLEI
         
-        dbWs.Cells(dbRow, "DP").Value = "NO"
+        dbWs.Cells(dbRow, "DP").Value2 = "NO"
         
-        dbWs.Cells(dbRow, "DZ").Value = "NATIONAL_ID_NUM"
-        dbWs.Cells(dbRow, "EA").Value = selgerMortpartID
-        dbWs.Cells(dbRow, "EB").Value = "NO"
+        dbWs.Cells(dbRow, "DZ").Value2 = "NATIONAL_ID_NUM"
+        dbWs.Cells(dbRow, "EA").Value2 = selgerMortpartID
+        dbWs.Cells(dbRow, "EB").Value2 = "NO"
         
-        dbWs.Cells(dbRow, "EP").Value = "NOT_WITHIN_FIRM"
-        dbWs.Cells(dbRow, "EQ").Value = "NORE"
+        dbWs.Cells(dbRow, "EP").Value2 = "NOT_WITHIN_FIRM"
+        dbWs.Cells(dbRow, "EQ").Value2 = "NORE"
         
-        dbWs.Cells(dbRow, "FA").Value = "AOTC"
-        dbWs.Cells(dbRow, "FO").Value = "N"
+        dbWs.Cells(dbRow, "FA").Value2 = "AOTC"
+        dbWs.Cells(dbRow, "FO").Value2 = "N"
         
     Next r
     
