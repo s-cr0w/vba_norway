@@ -25,6 +25,8 @@ Sub ImportCSVToDatabase()
     Dim restValue As String
     Dim i As Long
     
+    Dim fieldInfo(1 To 16, 1 To 2) As Variant
+    
     Dim oldScreenUpdating As Boolean
     Dim oldDisplayAlerts As Boolean
     
@@ -73,12 +75,40 @@ Sub ImportCSVToDatabase()
     Application.DisplayAlerts = False
     
     '------------------------------------------------------------
-    ' Open CSV
+    ' Tell Excel to import ALL CSV columns as TEXT.
+    '
+    ' This is important because otherwise Excel may automatically
+    ' convert values such as:
+    '
+    ' 2026-06-23 14:12:56.214000
+    '
+    ' into a date/time before VBA can process the value.
     '------------------------------------------------------------
-    Set csvWb = Workbooks.Open( _
-                    Filename:=CStr(csvPath), _
-                    ReadOnly:=True)
+    For i = 1 To 16
+        fieldInfo(i, 1) = i
+        fieldInfo(i, 2) = xlTextFormat
+    Next i
     
+    '------------------------------------------------------------
+    ' Import CSV as text
+    '
+    ' UTF-8 encoding is specified with Origin:=65001.
+    '------------------------------------------------------------
+    Workbooks.OpenText _
+        Filename:=CStr(csvPath), _
+        Origin:=65001, _
+        StartRow:=1, _
+        DataType:=xlDelimited, _
+        TextQualifier:=xlTextQualifierDoubleQuote, _
+        ConsecutiveDelimiter:=False, _
+        Tab:=False, _
+        Semicolon:=False, _
+        Comma:=True, _
+        Space:=False, _
+        Other:=False, _
+        FieldInfo:=fieldInfo
+    
+    Set csvWb = ActiveWorkbook
     Set csvWs = csvWb.Worksheets(1)
     
     '------------------------------------------------------------
@@ -126,13 +156,13 @@ Sub ImportCSVToDatabase()
         '========================================================
         ' CSV column 2 -> Database F
         '========================================================
-        dbWs.Cells(dbRow, "F").Value = csvWs.Cells(r, 2).Value
+        dbWs.Cells(dbRow, "F").Value = CStr(csvWs.Cells(r, 2).Value)
         
         '========================================================
         ' CSV column 4 -> Database S and T
         '========================================================
-        dbWs.Cells(dbRow, "S").Value = csvWs.Cells(r, 4).Value
-        dbWs.Cells(dbRow, "T").Value = csvWs.Cells(r, 4).Value
+        dbWs.Cells(dbRow, "S").Value = CStr(csvWs.Cells(r, 4).Value)
+        dbWs.Cells(dbRow, "T").Value = CStr(csvWs.Cells(r, 4).Value)
         
         '========================================================
         ' CSV column 7 -> Database AG
@@ -146,32 +176,45 @@ Sub ImportCSVToDatabase()
         '========================================================
         value7 = CStr(csvWs.Cells(r, 7).Value)
         
-        Do While Left(value7, 1) = "-"
+        Do While Len(value7) > 0 And Left(value7, 1) = "-"
             value7 = Mid(value7, 2)
         Loop
         
+        dbWs.Cells(dbRow, "AG").NumberFormat = "@"
         dbWs.Cells(dbRow, "AG").Value = value7
         
         '========================================================
         ' CSV column 3 -> Database AL
         '
-        ' 1. Remove last 4 characters
-        ' 2. Replace "." with ":"
-        ' 3. Replace spaces with "T"
-        ' 4. Store explicitly as TEXT
+        ' CSV input:
+        '
+        ' 2026-06-23 14:12:56.214000
+        '
+        ' Desired output:
+        '
+        ' 2026-06-23T14:12:56.21
+        '
+        ' The original CSV value is preserved as TEXT because
+        ' the CSV was imported with xlTextFormat.
         '========================================================
         value3 = CStr(csvWs.Cells(r, 3).Value)
         
-        If Len(value3) >= 4 Then
-            value3 = Left(value3, Len(value3) - 4)
+        If Len(value3) >= 22 Then
+            
+            ' Keep:
+            ' YYYY-MM-DD HH:MM:SS.xx
+            '
+            ' 22 characters total
+            value3 = Left(value3, 22)
+            
+            ' Replace the space between date and time with T
+            value3 = Replace(value3, " ", "T")
+            
         Else
             value3 = ""
         End If
         
-        value3 = Replace(value3, ".", ":")
-        value3 = Replace(value3, " ", "T")
-        
-        ' Force Excel to treat this as text
+        ' Explicitly store as TEXT
         dbWs.Cells(dbRow, "AL").NumberFormat = "@"
         dbWs.Cells(dbRow, "AL").Value = value3
         
@@ -235,7 +278,7 @@ Sub ImportCSVToDatabase()
         '========================================================
         
         ' Column A
-        ' Explicitly stored as TEXT to guarantee "." decimal separator
+        ' Stored as TEXT to guarantee "." decimal separator.
         dbWs.Cells(dbRow, "A").NumberFormat = "@"
         dbWs.Cells(dbRow, "A").Value = "2.4"
         
