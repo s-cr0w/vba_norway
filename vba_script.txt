@@ -78,7 +78,7 @@ Sub ImportCSVToDatabase()
     '------------------------------------------------------------
     ' Read CSV as RAW TEXT.
     '
-    ' The CSV is NOT opened by Excel.
+    ' Excel is NOT used to open the CSV.
     ' This prevents automatic date/number conversion.
     '------------------------------------------------------------
     Set csvLines = ReadCSVFile(CStr(csvPath))
@@ -118,11 +118,14 @@ Sub ImportCSVToDatabase()
         
         ' Make sure CSV contains at least 16 columns
         If UBound(fields) < 15 Then
+            
             MsgBox "CSV row " & r & _
                    " contains fewer than 16 columns." & vbCrLf & _
                    "Import stopped.", _
                    vbCritical, "Invalid CSV"
+            
             GoTo CleanUp
+            
         End If
         
         '========================================================
@@ -153,16 +156,15 @@ Sub ImportCSVToDatabase()
         '========================================================
         ' CSV column 3 -> Database AL
         '
-        ' Input example:
+        ' Input:
         '
         ' 2026-06-23 14:12:56.214000
         '
-        ' Desired output:
+        ' Output:
         '
         ' 2026-06-23T14:12:56
         '
         ' Fractional seconds are discarded.
-        ' The value is stored explicitly as TEXT.
         '========================================================
         value3 = Trim$(CStr(fields(2)))
         
@@ -324,10 +326,19 @@ End Sub
 '================================================================
 ' READ CSV FILE
 '
-' Uses native VBA file access instead of Excel or ADODB.
+' Determines whether the file has a UTF-8 BOM.
 '
-' This reads the CSV as raw text so Excel cannot convert
-' timestamps into dates before they reach the parser.
+' UTF-8 with BOM:
+'   Decode as UTF-8.
+'
+' No BOM:
+'   Treat as Windows/ANSI encoded.
+'
+' This is important for Norwegian/Danish characters such as:
+'
+' æ Æ
+' ø Ø
+' å Å
 '================================================================
 Function ReadCSVFile(ByVal filePath As String) As Collection
 
@@ -350,9 +361,13 @@ Function ReadCSVFile(ByVal filePath As String) As Collection
     fileLength = LOF(fileNumber)
     
     If fileLength = 0 Then
+        
         Close #fileNumber
+        
         Set ReadCSVFile = result
+        
         Exit Function
+        
     End If
     
     ReDim fileData(0 To fileLength - 1)
@@ -362,9 +377,10 @@ Function ReadCSVFile(ByVal filePath As String) As Collection
     Close #fileNumber
     
     '------------------------------------------------------------
-    ' Convert file bytes to text.
+    ' Check for UTF-8 BOM
     '
-    ' First check for UTF-8 BOM.
+    ' UTF-8 BOM:
+    ' EF BB BF
     '------------------------------------------------------------
     If fileLength >= 3 Then
         
@@ -372,17 +388,30 @@ Function ReadCSVFile(ByVal filePath As String) As Collection
            fileData(1) = &HBB And _
            fileData(2) = &HBF Then
             
+            '----------------------------------------------------
+            ' UTF-8 with BOM
+            '----------------------------------------------------
             fileText = UTF8BytesToString(fileData, 3)
             
         Else
             
-            fileText = UTF8BytesToString(fileData, 0)
+            '----------------------------------------------------
+            ' No BOM.
+            '
+            ' Read using the Windows/ANSI code page.
+            ' This preserves Nordic characters such as:
+            ' æ ø å Æ Ø Å
+            '----------------------------------------------------
+            fileText = ANSIBytesToString(fileData)
             
         End If
         
     Else
         
-        fileText = UTF8BytesToString(fileData, 0)
+        '--------------------------------------------------------
+        ' Very small file / no BOM
+        '--------------------------------------------------------
+        fileText = ANSIBytesToString(fileData)
         
     End If
     
@@ -409,9 +438,73 @@ End Function
 
 
 '================================================================
+' CONVERT ANSI BYTES TO VBA STRING
+'
+' Uses the Windows system code page.
+'
+' On a Nordic Windows installation this correctly handles:
+'
+' æ Æ
+' ø Ø
+' å Å
+'================================================================
+Function ANSIBytesToString(ByRef bytes() As Byte) As String
+
+    Dim tempFile As Integer
+    Dim tempPath As String
+    Dim fileLength As Long
+    Dim result As String
+    
+    '------------------------------------------------------------
+    ' Use a temporary file so Windows itself performs the
+    ' correct ANSI -> Unicode conversion.
+    '------------------------------------------------------------
+    tempPath = Environ$("TEMP") & "\vba_csv_temp_" & _
+               Format$(Timer * 1000, "0") & ".tmp"
+    
+    tempFile = FreeFile
+    
+    Open tempPath For Binary Access Write As #tempFile
+    
+    Put #tempFile, , bytes
+    
+    Close #tempFile
+    
+    '------------------------------------------------------------
+    ' Open the temporary file as normal text.
+    '
+    ' VBA will use the Windows system ANSI code page.
+    '------------------------------------------------------------
+    tempFile = FreeFile
+    
+    Open tempPath For Input As #tempFile
+    
+    fileLength = LOF(tempFile)
+    
+    If fileLength > 0 Then
+        result = Input$(fileLength, #tempFile)
+    Else
+        result = ""
+    End If
+    
+    Close #tempFile
+    
+    '------------------------------------------------------------
+    ' Delete temporary file
+    '------------------------------------------------------------
+    On Error Resume Next
+    Kill tempPath
+    On Error GoTo 0
+    
+    ANSIBytesToString = result
+
+End Function
+
+
+'================================================================
 ' UTF-8 BYTE ARRAY -> VBA STRING
 '
-' Converts UTF-8 bytes without using ADODB.
+' Used only when the CSV has a UTF-8 BOM.
 '================================================================
 Function UTF8BytesToString( _
     ByRef bytes() As Byte, _
@@ -459,7 +552,9 @@ Function UTF8BytesToString( _
                 i = i + 2
                 
             Else
+                
                 i = i + 1
+                
             End If
         
         '--------------------------------------------------------
@@ -482,7 +577,9 @@ Function UTF8BytesToString( _
                 i = i + 3
                 
             Else
+                
                 i = i + 1
+                
             End If
         
         '--------------------------------------------------------
@@ -520,7 +617,9 @@ Function UTF8BytesToString( _
                 i = i + 4
                 
             Else
+                
                 i = i + 1
+                
             End If
         
         Else
@@ -571,7 +670,9 @@ Function ParseCSVLine(ByVal line As String) As Variant
             
             If inQuotes Then
                 
+                '------------------------------------------------
                 ' Escaped quote ""
+                '------------------------------------------------
                 If i < Len(line) Then
                     
                     nextChar = Mid$(line, i + 1, 1)
@@ -617,7 +718,9 @@ Function ParseCSVLine(ByVal line As String) As Variant
         
     Next i
     
+    '------------------------------------------------------------
     ' Add final field
+    '------------------------------------------------------------
     result(fieldIndex) = field
     
     ParseCSVLine = result
