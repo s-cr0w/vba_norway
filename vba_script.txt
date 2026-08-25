@@ -1,0 +1,293 @@
+Option Explicit
+
+Sub ImportCSVToDatabase()
+
+    Dim csvPath As Variant
+    Dim csvWb As Workbook
+    Dim csvWs As Worksheet
+    Dim dbWs As Worksheet
+    
+    Dim lastCsvRow As Long
+    Dim lastDbRow As Long
+    Dim startRow As Long
+    Dim numRows As Long
+    Dim r As Long
+    Dim dbRow As Long
+    
+    Dim kjoperLEI As String
+    Dim selgerMortpartID As String
+    Dim selgerFodelsedag As String
+    
+    Dim value16 As String
+    Dim parts() As String
+    Dim i As Long
+    Dim restValue As String
+    Dim value3 As String
+    
+    Dim oldScreenUpdating As Boolean
+    Dim oldDisplayAlerts As Boolean
+    
+    On Error GoTo ErrorHandler
+    
+    '------------------------------------------------------------
+    ' Get the Database worksheet
+    '------------------------------------------------------------
+    Set dbWs = ThisWorkbook.Worksheets("Database")
+    
+    '------------------------------------------------------------
+    ' Prompt for CSV file
+    '------------------------------------------------------------
+    csvPath = Application.GetOpenFilename( _
+                FileFilter:="CSV Files (*.csv),*.csv", _
+                Title:="Select CSV file")
+    
+    If csvPath = False Then
+        Exit Sub
+    End If
+    
+    '------------------------------------------------------------
+    ' Prompt for additional values
+    '------------------------------------------------------------
+    kjoperLEI = InputBox("Kjoper LEI", "Kjoper LEI")
+    
+    If StrPtr(kjoperLEI) = 0 Then Exit Sub
+    
+    selgerMortpartID = InputBox("Selger Mortpart ID", "Selger Mortpart ID")
+    
+    If StrPtr(selgerMortpartID) = 0 Then Exit Sub
+    
+    selgerFodelsedag = InputBox( _
+        "Selger Fodelsedag YYYY-MM-DD", _
+        "Selger Fodelsedag")
+    
+    If StrPtr(selgerFodelsedag) = 0 Then Exit Sub
+    
+    '------------------------------------------------------------
+    ' Improve performance
+    '------------------------------------------------------------
+    oldScreenUpdating = Application.ScreenUpdating
+    oldDisplayAlerts = Application.DisplayAlerts
+    
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    
+    '------------------------------------------------------------
+    ' Open CSV
+    '------------------------------------------------------------
+    Set csvWb = Workbooks.Open( _
+                    Filename:=CStr(csvPath), _
+                    ReadOnly:=True)
+    
+    Set csvWs = csvWb.Worksheets(1)
+    
+    '------------------------------------------------------------
+    ' Find last row in CSV
+    '
+    ' CSV has NO header row, so row 1 is data.
+    '------------------------------------------------------------
+    lastCsvRow = csvWs.Cells(csvWs.Rows.Count, 2).End(xlUp).Row
+    
+    If lastCsvRow < 1 Then
+        MsgBox "The CSV file contains no data.", vbExclamation
+        GoTo CleanUp
+    End If
+    
+    numRows = lastCsvRow
+    
+    '------------------------------------------------------------
+    ' Find first available row in Database.
+    '
+    ' Row 1 is reserved for headers.
+    ' Existing data is never overwritten.
+    '------------------------------------------------------------
+    lastDbRow = dbWs.Cells(dbWs.Rows.Count, "F").End(xlUp).Row
+    
+    If lastDbRow < 2 Then
+        startRow = 2
+    Else
+        startRow = lastDbRow + 1
+    End If
+    
+    '------------------------------------------------------------
+    ' Import each CSV row
+    '------------------------------------------------------------
+    For r = 1 To lastCsvRow
+        
+        dbRow = startRow + (r - 1)
+        
+        '========================================================
+        ' Values directly from CSV
+        '========================================================
+        
+        ' CSV column 2 -> Database F
+        dbWs.Cells(dbRow, "F").Value = csvWs.Cells(r, 2).Value
+        
+        ' CSV column 4 -> Database S and T
+        dbWs.Cells(dbRow, "S").Value = csvWs.Cells(r, 4).Value
+        dbWs.Cells(dbRow, "T").Value = csvWs.Cells(r, 4).Value
+        
+        ' CSV column 7 -> Database AG
+        dbWs.Cells(dbRow, "AG").Value = csvWs.Cells(r, 7).Value
+        
+        '========================================================
+        ' CSV column 3 -> Database AL
+        '
+        ' 1. Remove last 4 characters
+        ' 2. Replace "." with ":"
+        ' 3. Replace spaces with "T"
+        '========================================================
+        
+        value3 = CStr(csvWs.Cells(r, 3).Value)
+        
+        If Len(value3) >= 4 Then
+            value3 = Left(value3, Len(value3) - 4)
+        Else
+            value3 = ""
+        End If
+        
+        value3 = Replace(value3, ".", ":")
+        value3 = Replace(value3, " ", "T")
+        
+        dbWs.Cells(dbRow, "AL").Value = value3
+        
+        '========================================================
+        ' CSV column 16
+        '
+        ' Split on spaces.
+        ' Last value -> EC
+        ' Everything before last value -> ED
+        '========================================================
+        
+        value16 = Trim(CStr(csvWs.Cells(r, 16).Value))
+        
+        If Len(value16) > 0 Then
+            
+            parts = Split(value16, " ")
+            
+            ' Last value -> EC
+            dbWs.Cells(dbRow, "EC").Value = parts(UBound(parts))
+            
+            ' Everything before last value -> ED
+            restValue = ""
+            
+            If UBound(parts) > 0 Then
+                
+                For i = LBound(parts) To UBound(parts) - 1
+                    
+                    If restValue <> "" Then
+                        restValue = restValue & " "
+                    End If
+                    
+                    restValue = restValue & parts(i)
+                    
+                Next i
+                
+            End If
+            
+            dbWs.Cells(dbRow, "ED").Value = restValue
+            
+        Else
+            
+            dbWs.Cells(dbRow, "EC").Value = ""
+            dbWs.Cells(dbRow, "ED").Value = ""
+            
+        End If
+        
+        '========================================================
+        ' Prompted values
+        '========================================================
+        
+        ' Kjoper LEI
+        dbWs.Cells(dbRow, "DB").Value = kjoperLEI
+        
+        ' Selger Mortpart ID
+        dbWs.Cells(dbRow, "DD").Value = selgerMortpartID
+        
+        ' Selger Fodelsedag
+        dbWs.Cells(dbRow, "EE").Value = selgerFodelsedag
+        
+        '========================================================
+        ' Fixed values
+        '========================================================
+        
+        dbWs.Cells(dbRow, "A").Value = "2.4"
+        dbWs.Cells(dbRow, "C").Value = "EQ"
+        dbWs.Cells(dbRow, "D").Value = "CS"
+        dbWs.Cells(dbRow, "E").Value = "ISIN"
+        
+        dbWs.Cells(dbRow, "W").Value = "MIC"
+        dbWs.Cells(dbRow, "X").Value = "XOFF"
+        dbWs.Cells(dbRow, "AA").Value = "NA"
+        dbWs.Cells(dbRow, "AB").Value = "NOK"
+        
+        dbWs.Cells(dbRow, "CW").Value = "N"
+        dbWs.Cells(dbRow, "CY").Value = "N"
+        
+        dbWs.Cells(dbRow, "DA").Value = "LEI"
+        dbWs.Cells(dbRow, "DC").Value = "NATIONAL_ID_NUM"
+        
+        dbWs.Cells(dbRow, "DI").Value = "LEI"
+        dbWs.Cells(dbRow, "DJ").Value = kjoperLEI
+        dbWs.Cells(dbRow, "DK").Value = "Y"
+        
+        dbWs.Cells(dbRow, "DL").Value = "LEI"
+        dbWs.Cells(dbRow, "DM").Value = kjoperLEI
+        
+        dbWs.Cells(dbRow, "DN").Value = "LEI"
+        dbWs.Cells(dbRow, "DO").Value = kjoperLEI
+        
+        dbWs.Cells(dbRow, "DP").Value = "NO"
+        
+        dbWs.Cells(dbRow, "DZ").Value = "NATIONAL_ID_NUM"
+        dbWs.Cells(dbRow, "EA").Value = selgerMortpartID
+        dbWs.Cells(dbRow, "EB").Value = "NO"
+        
+        dbWs.Cells(dbRow, "EP").Value = "NOT_WITHIN_FIRM"
+        dbWs.Cells(dbRow, "EQ").Value = "NORE"
+        
+        dbWs.Cells(dbRow, "FA").Value = "AOTC"
+        dbWs.Cells(dbRow, "FO").Value = "N"
+        
+    Next r
+    
+    '------------------------------------------------------------
+    ' Close CSV without saving
+    '------------------------------------------------------------
+    csvWb.Close SaveChanges:=False
+    Set csvWb = Nothing
+    
+    Application.ScreenUpdating = oldScreenUpdating
+    Application.DisplayAlerts = oldDisplayAlerts
+    
+    MsgBox numRows & " rows imported successfully." & vbCrLf & _
+           "Starting row: " & startRow & vbCrLf & _
+           "Ending row: " & (startRow + numRows - 1), _
+           vbInformation, "Import complete"
+    
+    Exit Sub
+
+CleanUp:
+
+    If Not csvWb Is Nothing Then
+        csvWb.Close SaveChanges:=False
+    End If
+    
+    Application.ScreenUpdating = oldScreenUpdating
+    Application.DisplayAlerts = oldDisplayAlerts
+    
+    Exit Sub
+
+ErrorHandler:
+
+    If Not csvWb Is Nothing Then
+        csvWb.Close SaveChanges:=False
+    End If
+    
+    Application.ScreenUpdating = oldScreenUpdating
+    Application.DisplayAlerts = oldDisplayAlerts
+    
+    MsgBox "An error occurred:" & vbCrLf & vbCrLf & _
+           Err.Number & " - " & Err.Description, _
+           vbCritical, "Import failed"
+
+End Sub
