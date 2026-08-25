@@ -78,8 +78,8 @@ Sub ImportCSVToDatabase()
     '------------------------------------------------------------
     ' Read CSV as RAW TEXT.
     '
-    ' Excel is NOT used to open the CSV.
-    ' This prevents Excel from converting dates/numbers.
+    ' The CSV is NOT opened by Excel.
+    ' This prevents automatic date/number conversion.
     '------------------------------------------------------------
     Set csvLines = ReadCSVFile(CStr(csvPath))
     
@@ -236,8 +236,8 @@ Sub ImportCSVToDatabase()
         '--------------------------------------------------------
         ' EE
         '
-        ' Keep number format as General but force the value
-        ' to remain text rather than becoming a date.
+        ' Keep Excel number format as General but force the value
+        ' to remain text instead of becoming a date.
         '--------------------------------------------------------
         dbWs.Cells(dbRow, "EE").NumberFormat = "General"
         dbWs.Cells(dbRow, "EE").Value2 = "'" & selgerFodelsedag
@@ -325,45 +325,77 @@ End Sub
 '================================================================
 ' READ CSV FILE
 '
-' Reads the CSV directly as text.
+' Uses native VBA file access instead of Excel or ADODB.
+'
+' This reads the CSV as raw text so Excel cannot convert
+' timestamps into dates before they reach the parser.
 '================================================================
 Function ReadCSVFile(ByVal filePath As String) As Collection
 
-    Dim stream As Object
+    Dim fileNumber As Integer
+    Dim fileLength As Long
+    Dim fileData() As Byte
     Dim fileText As String
+    
     Dim lines As Variant
     Dim result As New Collection
     Dim i As Long
     
-    Set stream = CreateObject("ADODB.Stream")
+    fileNumber = FreeFile
     
-    With stream
-        .Type = 2
-        .Charset = "utf-8"
-        .Open
-        .LoadFromFile filePath
+    '------------------------------------------------------------
+    ' Open file as binary
+    '------------------------------------------------------------
+    Open filePath For Binary Access Read As #fileNumber
+    
+    fileLength = LOF(fileNumber)
+    
+    If fileLength = 0 Then
+        Close #fileNumber
+        Set ReadCSVFile = result
+        Exit Function
+    End If
+    
+    ReDim fileData(0 To fileLength - 1)
+    
+    Get #fileNumber, , fileData
+    
+    Close #fileNumber
+    
+    '------------------------------------------------------------
+    ' Convert file bytes to text.
+    '
+    ' First check for UTF-8 BOM.
+    '------------------------------------------------------------
+    If fileLength >= 3 Then
         
-        fileText = .ReadText
+        If fileData(0) = &HEF And _
+           fileData(1) = &HBB And _
+           fileData(2) = &HBF Then
+            
+            fileText = UTF8BytesToString(fileData, 3)
+            
+        Else
+            
+            fileText = UTF8BytesToString(fileData, 0)
+            
+        End If
         
-        .Close
-    End With
+    Else
+        
+        fileText = UTF8BytesToString(fileData, 0)
+        
+    End If
     
-    Set stream = Nothing
-    
+    '------------------------------------------------------------
     ' Normalize line endings
+    '------------------------------------------------------------
     fileText = Replace(fileText, vbCrLf, vbLf)
     fileText = Replace(fileText, vbCr, vbLf)
     
     lines = Split(fileText, vbLf)
     
     For i = LBound(lines) To UBound(lines)
-        
-        ' Remove UTF-8 BOM from first line if present
-        If i = LBound(lines) Then
-            If Left$(lines(i), 1) = ChrW(&HFEFF) Then
-                lines(i) = Mid$(lines(i), 2)
-            End If
-        End If
         
         ' Ignore empty lines
         If Len(lines(i)) > 0 Then
@@ -373,6 +405,135 @@ Function ReadCSVFile(ByVal filePath As String) As Collection
     Next i
     
     Set ReadCSVFile = result
+
+End Function
+
+
+'================================================================
+' UTF-8 BYTE ARRAY -> VBA STRING
+'
+' Converts UTF-8 bytes without using ADODB.
+'================================================================
+Function UTF8BytesToString( _
+    ByRef bytes() As Byte, _
+    ByVal startPosition As Long) As String
+
+    Dim result As String
+    Dim i As Long
+    Dim b1 As Long
+    Dim b2 As Long
+    Dim b3 As Long
+    Dim b4 As Long
+    Dim codePoint As Long
+    
+    result = ""
+    
+    i = startPosition
+    
+    Do While i <= UBound(bytes)
+        
+        b1 = bytes(i)
+        
+        '--------------------------------------------------------
+        ' Standard ASCII
+        '--------------------------------------------------------
+        If b1 < &H80 Then
+            
+            result = result & ChrW$(b1)
+            i = i + 1
+        
+        '--------------------------------------------------------
+        ' Two-byte UTF-8
+        '--------------------------------------------------------
+        ElseIf b1 >= &HC0 And b1 <= &HDF Then
+            
+            If i + 1 <= UBound(bytes) Then
+                
+                b2 = bytes(i + 1)
+                
+                codePoint = _
+                    ((b1 And &H1F) * &H40) + _
+                    (b2 And &H3F)
+                
+                result = result & ChrW$(codePoint)
+                
+                i = i + 2
+                
+            Else
+                i = i + 1
+            End If
+        
+        '--------------------------------------------------------
+        ' Three-byte UTF-8
+        '--------------------------------------------------------
+        ElseIf b1 >= &HE0 And b1 <= &HEF Then
+            
+            If i + 2 <= UBound(bytes) Then
+                
+                b2 = bytes(i + 1)
+                b3 = bytes(i + 2)
+                
+                codePoint = _
+                    ((b1 And &HF) * &H1000) + _
+                    ((b2 And &H3F) * &H40) + _
+                    (b3 And &H3F)
+                
+                result = result & ChrW$(codePoint)
+                
+                i = i + 3
+                
+            Else
+                i = i + 1
+            End If
+        
+        '--------------------------------------------------------
+        ' Four-byte UTF-8
+        '--------------------------------------------------------
+        ElseIf b1 >= &HF0 And b1 <= &HF7 Then
+            
+            If i + 3 <= UBound(bytes) Then
+                
+                b2 = bytes(i + 1)
+                b3 = bytes(i + 2)
+                b4 = bytes(i + 3)
+                
+                codePoint = _
+                    ((b1 And &H7) * &H40000) + _
+                    ((b2 And &H3F) * &H1000) + _
+                    ((b3 And &H3F) * &H40) + _
+                    (b4 And &H3F)
+                
+                ' Convert to UTF-16 surrogate pair
+                If codePoint >= &H10000 Then
+                    
+                    codePoint = codePoint - &H10000
+                    
+                    result = result & _
+                        ChrW$(&HD800 Or (codePoint \ &H400)) & _
+                        ChrW$(&HDC00 Or (codePoint And &H3FF))
+                    
+                Else
+                    
+                    result = result & ChrW$(codePoint)
+                    
+                End If
+                
+                i = i + 4
+                
+            Else
+                i = i + 1
+            End If
+        
+        Else
+            
+            ' Invalid UTF-8 byte; skip it
+            i = i + 1
+            
+        End If
+        
+    Loop
+    
+    UTF8BytesToString = result
 
 End Function
 
@@ -417,14 +578,20 @@ Function ParseCSVLine(ByVal line As String) As Variant
                     nextChar = Mid$(line, i + 1, 1)
                     
                     If nextChar = """" Then
+                        
                         field = field & """"
                         i = i + 1
+                        
                     Else
+                        
                         inQuotes = False
+                        
                     End If
                     
                 Else
+                    
                     inQuotes = False
+                    
                 End If
                 
             Else
