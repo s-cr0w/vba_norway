@@ -112,11 +112,11 @@ Sub ImportCSVToDatabase()
         dbRow = startRow + (r - 1)
         
         '--------------------------------------------------------
-        ' Parse the CSV line
+        ' Parse CSV line
         '--------------------------------------------------------
         fields = ParseCSVLine(CStr(csvLines(r)))
         
-        ' Make sure the CSV contains at least 16 columns
+        ' Make sure CSV contains at least 16 columns
         If UBound(fields) < 15 Then
             MsgBox "CSV row " & r & _
                    " contains fewer than 16 columns." & vbCrLf & _
@@ -155,15 +155,13 @@ Sub ImportCSVToDatabase()
         '
         ' Example input:
         '
-        ' 2026-06-23 14:12:56.214000
+        ' 2026-06-23 14:14:12.700000
         '
         ' Desired output:
         '
-        ' 2026-06-23T14:12:56.21
+        ' 2026-06-23T14:14:12.70
         '
-        ' IMPORTANT:
-        ' The CSV value is still the original STRING here.
-        ' Excel has never interpreted it as a date.
+        ' This is constructed entirely as a STRING.
         '========================================================
         value3 = Trim$(CStr(fields(2)))
         
@@ -173,6 +171,7 @@ Sub ImportCSVToDatabase()
                 Mid$(value3, 1, 10) & _
                 "T" & _
                 Mid$(value3, 12, 8) & _
+                "." & _
                 Mid$(value3, 21, 2)
             
         Else
@@ -181,19 +180,16 @@ Sub ImportCSVToDatabase()
             
         End If
         
-        ' Force destination cell to text
+        ' Force AL to TEXT
         dbWs.Cells(dbRow, "AL").NumberFormat = "@"
         dbWs.Cells(dbRow, "AL").Value2 = value3
         
         '========================================================
         ' CSV column 16 -> EC and ED
         '
-        ' Example:
-        '
-        ' ABC DEF GHI
-        '
-        ' EC = GHI
-        ' ED = ABC DEF
+        ' Split on spaces.
+        ' Last value -> EC
+        ' Everything before last value -> ED
         '========================================================
         value16 = Trim$(CStr(fields(15)))
         
@@ -240,8 +236,8 @@ Sub ImportCSVToDatabase()
         '--------------------------------------------------------
         ' EE
         '
-        ' Keep Excel number format as General but force the
-        ' value to remain text rather than becoming a date.
+        ' Keep number format as General but force the value
+        ' to remain text rather than becoming a date.
         '--------------------------------------------------------
         dbWs.Cells(dbRow, "EE").NumberFormat = "General"
         dbWs.Cells(dbRow, "EE").Value2 = "'" & selgerFodelsedag
@@ -330,8 +326,6 @@ End Sub
 ' READ CSV FILE
 '
 ' Reads the CSV directly as text.
-'
-' Uses ADODB.Stream so UTF-8 CSV files are handled correctly.
 '================================================================
 Function ReadCSVFile(ByVal filePath As String) As Collection
 
@@ -344,7 +338,7 @@ Function ReadCSVFile(ByVal filePath As String) As Collection
     Set stream = CreateObject("ADODB.Stream")
     
     With stream
-        .Type = 2              ' Text
+        .Type = 2
         .Charset = "utf-8"
         .Open
         .LoadFromFile filePath
@@ -371,7 +365,7 @@ Function ReadCSVFile(ByVal filePath As String) As Collection
             End If
         End If
         
-        ' Ignore completely empty lines at the end
+        ' Ignore empty lines
         If Len(lines(i)) > 0 Then
             result.Add lines(i)
         End If
@@ -391,12 +385,6 @@ End Function
 '   - Quoted fields
 '   - Commas inside quoted fields
 '   - Escaped quotes ("")
-'
-' Example:
-'
-' "ABC","Hello, world","2026-06-23 14:12:56.214000"
-'
-' becomes three separate fields.
 '================================================================
 Function ParseCSVLine(ByVal line As String) As Variant
 
@@ -423,11 +411,7 @@ Function ParseCSVLine(ByVal line As String) As Variant
             
             If inQuotes Then
                 
-                '------------------------------------------------
-                ' Escaped quote:
-                '
-                ' ""
-                '------------------------------------------------
+                ' Escaped quote ""
                 If i < Len(line) Then
                     
                     nextChar = Mid$(line, i + 1, 1)
