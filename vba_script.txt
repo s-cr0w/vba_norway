@@ -18,11 +18,12 @@ Sub ImportCSVToDatabase()
     Dim selgerMortpartID As String
     Dim selgerFodelsedag As String
     
-    Dim value16 As String
-    Dim parts() As String
-    Dim i As Long
-    Dim restValue As String
     Dim value3 As String
+    Dim value16 As String
+    Dim value7 As String
+    Dim parts() As String
+    Dim restValue As String
+    Dim i As Long
     
     Dim oldScreenUpdating As Boolean
     Dim oldDisplayAlerts As Boolean
@@ -109,6 +110,13 @@ Sub ImportCSVToDatabase()
     End If
     
     '------------------------------------------------------------
+    ' Set destination columns that must contain text
+    '------------------------------------------------------------
+    dbWs.Range("A" & startRow & ":A" & startRow + numRows - 1).NumberFormat = "@"
+    dbWs.Range("AG" & startRow & ":AG" & startRow + numRows - 1).NumberFormat = "@"
+    dbWs.Range("AL" & startRow & ":AL" & startRow + numRows - 1).NumberFormat = "@"
+    
+    '------------------------------------------------------------
     ' Import each CSV row
     '------------------------------------------------------------
     For r = 1 To lastCsvRow
@@ -116,18 +124,33 @@ Sub ImportCSVToDatabase()
         dbRow = startRow + (r - 1)
         
         '========================================================
-        ' Values directly from CSV
-        '========================================================
-        
         ' CSV column 2 -> Database F
+        '========================================================
         dbWs.Cells(dbRow, "F").Value = csvWs.Cells(r, 2).Value
         
+        '========================================================
         ' CSV column 4 -> Database S and T
+        '========================================================
         dbWs.Cells(dbRow, "S").Value = csvWs.Cells(r, 4).Value
         dbWs.Cells(dbRow, "T").Value = csvWs.Cells(r, 4).Value
         
+        '========================================================
         ' CSV column 7 -> Database AG
-        dbWs.Cells(dbRow, "AG").Value = csvWs.Cells(r, 7).Value
+        '
+        ' Convert to string and remove ALL leading "-".
+        '
+        ' Examples:
+        '   -12345    -> 12345
+        '   --12345   -> 12345
+        '   ---12345  -> 12345
+        '========================================================
+        value7 = CStr(csvWs.Cells(r, 7).Value)
+        
+        Do While Left(value7, 1) = "-"
+            value7 = Mid(value7, 2)
+        Loop
+        
+        dbWs.Cells(dbRow, "AG").Value = value7
         
         '========================================================
         ' CSV column 3 -> Database AL
@@ -135,8 +158,8 @@ Sub ImportCSVToDatabase()
         ' 1. Remove last 4 characters
         ' 2. Replace "." with ":"
         ' 3. Replace spaces with "T"
+        ' 4. Store explicitly as TEXT
         '========================================================
-        
         value3 = CStr(csvWs.Cells(r, 3).Value)
         
         If Len(value3) >= 4 Then
@@ -148,6 +171,8 @@ Sub ImportCSVToDatabase()
         value3 = Replace(value3, ".", ":")
         value3 = Replace(value3, " ", "T")
         
+        ' Force Excel to treat this as text
+        dbWs.Cells(dbRow, "AL").NumberFormat = "@"
         dbWs.Cells(dbRow, "AL").Value = value3
         
         '========================================================
@@ -157,7 +182,6 @@ Sub ImportCSVToDatabase()
         ' Last value -> EC
         ' Everything before last value -> ED
         '========================================================
-        
         value16 = Trim(CStr(csvWs.Cells(r, 16).Value))
         
         If Len(value16) > 0 Then
@@ -210,7 +234,11 @@ Sub ImportCSVToDatabase()
         ' Fixed values
         '========================================================
         
+        ' Column A
+        ' Explicitly stored as TEXT to guarantee "." decimal separator
+        dbWs.Cells(dbRow, "A").NumberFormat = "@"
         dbWs.Cells(dbRow, "A").Value = "2.4"
+        
         dbWs.Cells(dbRow, "C").Value = "EQ"
         dbWs.Cells(dbRow, "D").Value = "CS"
         dbWs.Cells(dbRow, "E").Value = "ISIN"
