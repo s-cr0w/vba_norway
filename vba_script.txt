@@ -3,11 +3,11 @@ Option Explicit
 Sub ImportCSVToDatabase()
 
     Dim csvPath As Variant
-    Dim csvWb As Workbook
-    Dim csvWs As Worksheet
     Dim dbWs As Worksheet
     
-    Dim lastCsvRow As Long
+    Dim csvLines As Collection
+    Dim fields As Variant
+    
     Dim lastDbRow As Long
     Dim startRow As Long
     Dim numRows As Long
@@ -19,14 +19,12 @@ Sub ImportCSVToDatabase()
     Dim selgerFodelsedag As String
     
     Dim value3 As String
-    Dim value16 As String
     Dim value7 As String
+    Dim value16 As String
+    
     Dim parts() As String
     Dim restValue As String
     Dim i As Long
-    
-    Dim fieldInfo() As Variant
-    Dim maxColumns As Long
     
     Dim oldScreenUpdating As Boolean
     Dim oldDisplayAlerts As Boolean
@@ -34,7 +32,7 @@ Sub ImportCSVToDatabase()
     On Error GoTo ErrorHandler
     
     '------------------------------------------------------------
-    ' Get the Database worksheet
+    ' Get Database worksheet
     '------------------------------------------------------------
     Set dbWs = ThisWorkbook.Worksheets("Database")
     
@@ -56,7 +54,9 @@ Sub ImportCSVToDatabase()
     
     If StrPtr(kjoperLEI) = 0 Then Exit Sub
     
-    selgerMortpartID = InputBox("Selger Mortpart ID", "Selger Mortpart ID")
+    selgerMortpartID = InputBox( _
+        "Selger Mortpart ID", _
+        "Selger Mortpart ID")
     
     If StrPtr(selgerMortpartID) = 0 Then Exit Sub
     
@@ -76,48 +76,19 @@ Sub ImportCSVToDatabase()
     Application.DisplayAlerts = False
     
     '------------------------------------------------------------
-    ' Import CSV.
+    ' Read CSV as RAW TEXT.
     '
-    ' All first 16 columns are explicitly imported as TEXT.
-    ' This prevents Excel from converting dates/numbers automatically.
+    ' Excel is NOT used to open the CSV.
+    ' This prevents Excel from converting dates/numbers.
     '------------------------------------------------------------
+    Set csvLines = ReadCSVFile(CStr(csvPath))
     
-    ReDim fieldInfo(1 To 16)
-    
-    For i = 1 To 16
-        fieldInfo(i) = Array(i, xlTextFormat)
-    Next i
-    
-    Workbooks.OpenText _
-        Filename:=CStr(csvPath), _
-        Origin:=65001, _
-        StartRow:=1, _
-        DataType:=xlDelimited, _
-        TextQualifier:=xlTextQualifierDoubleQuote, _
-        ConsecutiveDelimiter:=False, _
-        Tab:=False, _
-        Semicolon:=False, _
-        Comma:=True, _
-        Space:=False, _
-        Other:=False, _
-        FieldInfo:=fieldInfo
-    
-    Set csvWb = ActiveWorkbook
-    Set csvWs = csvWb.Worksheets(1)
-    
-    '------------------------------------------------------------
-    ' Find last row in CSV.
-    '
-    ' CSV has NO header row.
-    '------------------------------------------------------------
-    lastCsvRow = csvWs.Cells(csvWs.Rows.Count, 2).End(xlUp).Row
-    
-    If lastCsvRow < 1 Then
+    If csvLines.Count = 0 Then
         MsgBox "The CSV file contains no data.", vbExclamation
         GoTo CleanUp
     End If
     
-    numRows = lastCsvRow
+    numRows = csvLines.Count
     
     '------------------------------------------------------------
     ' Find first available row in Database.
@@ -136,27 +107,41 @@ Sub ImportCSVToDatabase()
     '------------------------------------------------------------
     ' Import each CSV row
     '------------------------------------------------------------
-    For r = 1 To lastCsvRow
+    For r = 1 To csvLines.Count
         
         dbRow = startRow + (r - 1)
+        
+        '--------------------------------------------------------
+        ' Parse the CSV line
+        '--------------------------------------------------------
+        fields = ParseCSVLine(CStr(csvLines(r)))
+        
+        ' Make sure the CSV contains at least 16 columns
+        If UBound(fields) < 15 Then
+            MsgBox "CSV row " & r & _
+                   " contains fewer than 16 columns." & vbCrLf & _
+                   "Import stopped.", _
+                   vbCritical, "Invalid CSV"
+            GoTo CleanUp
+        End If
         
         '========================================================
         ' CSV column 2 -> Database F
         '========================================================
-        dbWs.Cells(dbRow, "F").Value2 = CStr(csvWs.Cells(r, 2).Value2)
+        dbWs.Cells(dbRow, "F").Value2 = CStr(fields(1))
         
         '========================================================
         ' CSV column 4 -> Database S and T
         '========================================================
-        dbWs.Cells(dbRow, "S").Value2 = CStr(csvWs.Cells(r, 4).Value2)
-        dbWs.Cells(dbRow, "T").Value2 = CStr(csvWs.Cells(r, 4).Value2)
+        dbWs.Cells(dbRow, "S").Value2 = CStr(fields(3))
+        dbWs.Cells(dbRow, "T").Value2 = CStr(fields(3))
         
         '========================================================
         ' CSV column 7 -> Database AG
         '
-        ' Convert to string and remove ALL leading "-".
+        ' Remove ALL leading "-" characters.
         '========================================================
-        value7 = CStr(csvWs.Cells(r, 7).Value2)
+        value7 = CStr(fields(6))
         
         Do While Len(value7) > 0 And Left$(value7, 1) = "-"
             value7 = Mid$(value7, 2)
@@ -168,61 +153,49 @@ Sub ImportCSVToDatabase()
         '========================================================
         ' CSV column 3 -> Database AL
         '
-        ' Expected CSV format:
+        ' Example input:
         '
         ' 2026-06-23 14:12:56.214000
         '
-        ' Output:
+        ' Desired output:
         '
         ' 2026-06-23T14:12:56.21
         '
-        ' The result is explicitly stored as TEXT.
+        ' IMPORTANT:
+        ' The CSV value is still the original STRING here.
+        ' Excel has never interpreted it as a date.
         '========================================================
-        
-        value3 = CStr(csvWs.Cells(r, 3).Value2)
-        
-        ' Remove any leading/trailing whitespace
-        value3 = Trim$(value3)
+        value3 = Trim$(CStr(fields(2)))
         
         If Len(value3) >= 22 Then
-            
-            ' Build the output explicitly rather than using
-            ' date/time conversion functions.
-            '
-            ' Characters:
-            ' 1-10  = YYYY-MM-DD
-            ' 12-19 = HH:MM:SS
-            ' 21-22 = hundredths of a second
             
             value3 = _
                 Mid$(value3, 1, 10) & _
                 "T" & _
                 Mid$(value3, 12, 8) & _
-                Mid$(value3, 20, 3)
-            
-            ' The above produces:
-            '
-            ' 2026-06-23T14:12:56.21
-            '
-            ' Store as text.
-            dbWs.Cells(dbRow, "AL").NumberFormat = "@"
-            dbWs.Cells(dbRow, "AL").Value2 = value3
+                Mid$(value3, 21, 2)
             
         Else
             
-            dbWs.Cells(dbRow, "AL").NumberFormat = "@"
-            dbWs.Cells(dbRow, "AL").Value2 = ""
+            value3 = ""
             
         End If
         
+        ' Force destination cell to text
+        dbWs.Cells(dbRow, "AL").NumberFormat = "@"
+        dbWs.Cells(dbRow, "AL").Value2 = value3
+        
         '========================================================
-        ' CSV column 16
+        ' CSV column 16 -> EC and ED
         '
-        ' Split on spaces.
-        ' Last value -> EC
-        ' Everything before last value -> ED
+        ' Example:
+        '
+        ' ABC DEF GHI
+        '
+        ' EC = GHI
+        ' ED = ABC DEF
         '========================================================
-        value16 = Trim$(CStr(csvWs.Cells(r, 16).Value2))
+        value16 = Trim$(CStr(fields(15)))
         
         If Len(value16) > 0 Then
             
@@ -261,18 +234,15 @@ Sub ImportCSVToDatabase()
         ' Prompted values
         '========================================================
         
-        ' Kjoper LEI
         dbWs.Cells(dbRow, "DB").Value2 = kjoperLEI
-        
-        ' Selger Mortpart ID
         dbWs.Cells(dbRow, "DD").Value2 = selgerMortpartID
         
-        ' Selger Fodelsedag
+        '--------------------------------------------------------
+        ' EE
         '
-        ' Keep the cell formatted as GENERAL but force Excel
-        ' to retain the YYYY-MM-DD value as text.
-        '
-        ' The leading apostrophe is not displayed in Excel.
+        ' Keep Excel number format as General but force the
+        ' value to remain text rather than becoming a date.
+        '--------------------------------------------------------
         dbWs.Cells(dbRow, "EE").NumberFormat = "General"
         dbWs.Cells(dbRow, "EE").Value2 = "'" & selgerFodelsedag
         
@@ -280,9 +250,8 @@ Sub ImportCSVToDatabase()
         ' Fixed values
         '========================================================
         
-        ' Column A
-        '
-        ' Store as TEXT so the decimal separator is always ".".
+        ' A
+        ' Stored as text to guarantee decimal ".".
         dbWs.Cells(dbRow, "A").NumberFormat = "@"
         dbWs.Cells(dbRow, "A").Value2 = "2.4"
         
@@ -326,11 +295,8 @@ Sub ImportCSVToDatabase()
     Next r
     
     '------------------------------------------------------------
-    ' Close CSV without saving
+    ' Restore Excel settings
     '------------------------------------------------------------
-    csvWb.Close SaveChanges:=False
-    Set csvWb = Nothing
-    
     Application.ScreenUpdating = oldScreenUpdating
     Application.DisplayAlerts = oldDisplayAlerts
     
@@ -343,10 +309,6 @@ Sub ImportCSVToDatabase()
 
 CleanUp:
 
-    If Not csvWb Is Nothing Then
-        csvWb.Close SaveChanges:=False
-    End If
-    
     Application.ScreenUpdating = oldScreenUpdating
     Application.DisplayAlerts = oldDisplayAlerts
     
@@ -354,10 +316,6 @@ CleanUp:
 
 ErrorHandler:
 
-    If Not csvWb Is Nothing Then
-        csvWb.Close SaveChanges:=False
-    End If
-    
     Application.ScreenUpdating = oldScreenUpdating
     Application.DisplayAlerts = oldDisplayAlerts
     
@@ -366,3 +324,152 @@ ErrorHandler:
            vbCritical, "Import failed"
 
 End Sub
+
+
+'================================================================
+' READ CSV FILE
+'
+' Reads the CSV directly as text.
+'
+' Uses ADODB.Stream so UTF-8 CSV files are handled correctly.
+'================================================================
+Function ReadCSVFile(ByVal filePath As String) As Collection
+
+    Dim stream As Object
+    Dim fileText As String
+    Dim lines As Variant
+    Dim result As New Collection
+    Dim i As Long
+    
+    Set stream = CreateObject("ADODB.Stream")
+    
+    With stream
+        .Type = 2              ' Text
+        .Charset = "utf-8"
+        .Open
+        .LoadFromFile filePath
+        
+        fileText = .ReadText
+        
+        .Close
+    End With
+    
+    Set stream = Nothing
+    
+    ' Normalize line endings
+    fileText = Replace(fileText, vbCrLf, vbLf)
+    fileText = Replace(fileText, vbCr, vbLf)
+    
+    lines = Split(fileText, vbLf)
+    
+    For i = LBound(lines) To UBound(lines)
+        
+        ' Remove UTF-8 BOM from first line if present
+        If i = LBound(lines) Then
+            If Left$(lines(i), 1) = ChrW(&HFEFF) Then
+                lines(i) = Mid$(lines(i), 2)
+            End If
+        End If
+        
+        ' Ignore completely empty lines at the end
+        If Len(lines(i)) > 0 Then
+            result.Add lines(i)
+        End If
+        
+    Next i
+    
+    Set ReadCSVFile = result
+
+End Function
+
+
+'================================================================
+' PARSE CSV LINE
+'
+' Handles:
+'   - Commas
+'   - Quoted fields
+'   - Commas inside quoted fields
+'   - Escaped quotes ("")
+'
+' Example:
+'
+' "ABC","Hello, world","2026-06-23 14:12:56.214000"
+'
+' becomes three separate fields.
+'================================================================
+Function ParseCSVLine(ByVal line As String) As Variant
+
+    Dim result() As String
+    Dim field As String
+    
+    Dim i As Long
+    Dim fieldIndex As Long
+    Dim inQuotes As Boolean
+    Dim currentChar As String
+    Dim nextChar As String
+    
+    ReDim result(0 To 0)
+    
+    fieldIndex = 0
+    field = ""
+    inQuotes = False
+    
+    For i = 1 To Len(line)
+        
+        currentChar = Mid$(line, i, 1)
+        
+        If currentChar = """" Then
+            
+            If inQuotes Then
+                
+                '------------------------------------------------
+                ' Escaped quote:
+                '
+                ' ""
+                '------------------------------------------------
+                If i < Len(line) Then
+                    
+                    nextChar = Mid$(line, i + 1, 1)
+                    
+                    If nextChar = """" Then
+                        field = field & """"
+                        i = i + 1
+                    Else
+                        inQuotes = False
+                    End If
+                    
+                Else
+                    inQuotes = False
+                End If
+                
+            Else
+                
+                inQuotes = True
+                
+            End If
+            
+        ElseIf currentChar = "," And Not inQuotes Then
+            
+            result(fieldIndex) = field
+            
+            fieldIndex = fieldIndex + 1
+            
+            ReDim Preserve result(0 To fieldIndex)
+            
+            field = ""
+            
+        Else
+            
+            field = field & currentChar
+            
+        End If
+        
+    Next i
+    
+    ' Add final field
+    result(fieldIndex) = field
+    
+    ParseCSVLine = result
+
+End Function
